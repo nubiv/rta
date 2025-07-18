@@ -1,10 +1,10 @@
 use clap::{Arg, Command};
-use plotters::prelude::*;
+use plotly::{Plot, Scatter};
 use polars::prelude::*;
 
 use rta::read_from_file;
 
-const OUTPUT_DIR: &str = "charts";
+// const OUTPUT_DIR: &str = "charts";
 
 fn main() -> PolarsResult<()> {
     let matches = Command::new("read_file")
@@ -23,10 +23,10 @@ fn main() -> PolarsResult<()> {
         .expect("Unable to parse source path...");
     println!("Reading data from file: {}", path);
 
-    let file_stem = std::path::Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("output");
+    // let file_stem = std::path::Path::new(path)
+    //     .file_stem()
+    //     .and_then(|s| s.to_str())
+    //     .unwrap_or("output");
 
     let mut df = read_from_file(path)?;
     println!("Data loaded. Number of rows: {}", df.height());
@@ -76,59 +76,28 @@ fn main() -> PolarsResult<()> {
     }
     println!("Sampled {} points for the plot.", x.len());
 
-    let filename = format!("{}/{}.png", OUTPUT_DIR, file_stem);
-    println!("Generating plot: {}", filename);
-    let root = BitMapBackend::new(&filename, (1200, 600)).into_drawing_area();
-    // let root = SVGBackend::new(&filename, (1200, 600)).into_drawing_area();
-    root.fill(&WHITE).expect("Failed to fill background");
+    println!("Generating plotly plot...");
+    // Prepare x-axis labels (ActionDay_UpdateTime) and y-axis (LastPrice)
+    let trace = Scatter::new(x.clone(), y.clone())
+        .mode(plotly::common::Mode::Lines)
+        .name("LastPrice");
 
-    let y_min = y.iter().cloned().fold(f64::INFINITY, f64::min);
-    let y_max = y.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let mut plot = Plot::new();
+    plot.add_trace(trace);
+    plot.set_layout(
+        plotly::Layout::new()
+            .title(format!("LastPrice Timeseries (1 every {} records)", step))
+            .x_axis(
+                plotly::layout::Axis::new()
+                    .title("ActionDay_UpdateTime")
+                    .tick_angle(45.0)
+                    .auto_margin(true),
+            )
+            .y_axis(plotly::layout::Axis::new().title("LastPrice")),
+    );
 
-    let mut chart = ChartBuilder::on(&root)
-        .caption(
-            format!("LastPrice Timeseries (1 every {} records)", step),
-            ("sans-serif", 30),
-        )
-        .margin(10)
-        .x_label_area_size(60)
-        .y_label_area_size(60)
-        .build_cartesian_2d(0..(x.len() - 1), y_min..y_max)
-        .expect("Failed to build chart");
-
-    chart
-        .configure_mesh()
-        .x_labels(10)
-        .x_label_formatter(&|idx| {
-            if let Some(label) = x.get(*idx) {
-                // Split the label into date and time for better readability
-                let parts: Vec<&str> = label.split('_').collect();
-                if parts.len() == 2 {
-                    format!("{}\n{}", parts[0], parts[1])
-                } else {
-                    label.clone()
-                }
-            } else {
-                "".to_string()
-            }
-        })
-        .x_label_style(
-            ("sans-serif", 14)
-                .into_font()
-                .transform(FontTransform::Rotate90),
-        )
-        .y_desc("LastPrice")
-        .x_desc("ActionDay\nUpdateTime")
-        .label_style(("sans-serif", 18).into_font())
-        .draw()
-        .expect("Failed to draw mesh");
-
-    chart
-        .draw_series(LineSeries::new((0..x.len()).map(|i| (i, y[i])), &RED))
-        .expect("Failed to draw line series");
-
-    root.present().expect("Unable to write result to file");
-    println!("Plot saved successfully to {}", filename);
+    plot.show();
+    println!("Plot displayed in browser...");
 
     Ok(())
 }
