@@ -1,10 +1,15 @@
+use charming::series::Line;
+use charming::{
+    Chart, ImageRenderer,
+    component::{Axis, Title},
+    element::AxisType,
+};
 use clap::{Arg, Command};
-use plotly::{Plot, Scatter};
 use polars::prelude::*;
 
 use rta::read_from_file;
 
-// const OUTPUT_DIR: &str = "charts";
+const OUTPUT_DIR: &str = "charts";
 
 fn main() -> PolarsResult<()> {
     let matches = Command::new("read_file")
@@ -22,11 +27,6 @@ fn main() -> PolarsResult<()> {
         .get_one::<String>("source")
         .expect("Unable to parse source path...");
     println!("Reading data from file: {}", path);
-
-    // let file_stem = std::path::Path::new(path)
-    //     .file_stem()
-    //     .and_then(|s| s.to_str())
-    //     .unwrap_or("output");
 
     let mut df = read_from_file(path)?;
     println!("Data loaded. Number of rows: {}", df.height());
@@ -76,28 +76,49 @@ fn main() -> PolarsResult<()> {
     }
     println!("Sampled {} points for the plot.", x.len());
 
-    println!("Generating plotly plot...");
-    // Prepare x-axis labels (ActionDay_UpdateTime) and y-axis (LastPrice)
-    let trace = Scatter::new(x.clone(), y.clone())
-        .mode(plotly::common::Mode::Lines)
-        .name("LastPrice");
+    println!("Generating charming plot...");
+    // Determine min and max for y-axis, ignoring NaN values
+    let (y_min, y_max) = y
+        .iter()
+        .filter_map(|v| if v.is_finite() { Some(*v) } else { None })
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min, max), v| {
+            (min.min(v), max.max(v))
+        });
 
-    let mut plot = Plot::new();
-    plot.add_trace(trace);
-    plot.set_layout(
-        plotly::Layout::new()
-            .title(format!("LastPrice Timeseries (1 every {} records)", step))
-            .x_axis(
-                plotly::layout::Axis::new()
-                    .title("ActionDay_UpdateTime")
-                    .tick_angle(45.0)
-                    .auto_margin(true),
-            )
-            .y_axis(plotly::layout::Axis::new().title("LastPrice")),
-    );
+    // Add margin to y-axis range (e.g., 5% of the range)
+    let margin = ((y_max - y_min) * 0.05).max(1e-8); // avoid zero margin
+    let y_axis_min = y_min - margin;
+    let y_axis_max = y_max + margin;
 
-    plot.show();
-    println!("Plot displayed in browser...");
+    // Dynamically adjust chart width based on number of x labels (minimum 1000, max 4000)
+    let base_width = 1000;
+    let width_per_label = 10;
+    let chart_width = (base_width + x.len() * width_per_label).min(4000);
+
+    let chart = Chart::new()
+        .title(Title::new().text(format!("LastPrice Timeseries (1 every {} records)", step)))
+        .x_axis(
+            Axis::new()
+                .type_(AxisType::Category)
+                .name("ActionDay_UpdateTime")
+                .data(x.clone()),
+        )
+        .y_axis(
+            Axis::new()
+                .name("LastPrice")
+                .min(y_axis_min)
+                .max(y_axis_max),
+        )
+        .series(Line::new().data(y.iter().cloned().collect::<Vec<f64>>()));
+
+    let file_stem = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let mut renderer = ImageRenderer::new(chart_width as u32, 800);
+    renderer
+        .save(&chart, format!("{}/{}.svg", OUTPUT_DIR, file_stem))
+        .expect("Failed to save charming plot");
 
     Ok(())
 }
